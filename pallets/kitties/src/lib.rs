@@ -14,37 +14,41 @@ pub use pallet::*;
 // #[cfg(feature = "runtime-benchmarks")]
 // mod benchmarking;
 
+use codec::{Decode, Encode, MaxEncodedLen};
+use frame_support::{
+	traits::{tokens::ExistenceRequirement, Currency, Randomness},
+	transactional,
+};
+use sp_runtime::{traits::Hash, RuntimeDebug};
+
+use scale_info::TypeInfo;
+
+use sp_io::hashing::blake2_128;
+
+type AccountOf<T> = <T as frame_system::Config>::AccountId;
+type BalanceOf<T> =
+	<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+
+#[derive(Encode, Decode, Clone, Eq, PartialEq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+pub struct Kitty<T: Config> {
+	pub id: [u8; 16],
+	pub dna: [u8; 16],
+	pub price: Option<BalanceOf<T>>,
+	pub gender: Gender,
+	pub owner: AccountOf<T>,
+}
+
+#[derive(Encode, Decode, Clone, Eq, PartialEq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+pub enum Gender {
+	Male,
+	Female,
+}
+
 #[frame_support::pallet]
 pub mod pallet {
-	use frame_support::{
-		sp_runtime::traits::{Hash,Zero},
-		dispatch::{DispatchResultWithPostInfo, DispatchResult},
-		traits::{Currency, ExistenceRequirement, Randomness},
-		pallet_prelude::*};
-	use frame_system::{pallet_prelude::*};
-	use sp_core::H256;
-
-	#[derive(Clone, Encode, Decode, Debug, PartialEq)]
-	pub enum Gender{
-		Male,
-		Female
-	}
-
-	#[derive(Clone, Encode, Decode, Default, PartialEq)]
-	pub struct Kitty<Hash, Balance>{
-		id: Hash,
-		dna: Hash,
-		price: Balance,
-		gender: Gender
-	}
-
-	impl Default for Gender{
-		fn default()-> Self{
-			Gender::Male
-		}
-	}
-
-
+	use super::*;
+	use frame_support::pallet_prelude::*;
+	use frame_system::pallet_prelude::*;
 
 	#[pallet::pallet]
 	#[pallet::generate_store(pub(super) trait Store)]
@@ -52,13 +56,16 @@ pub mod pallet {
 
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
-	pub trait Config: frame_system::Config + pallet_balances::Config {
+	pub trait Config: frame_system::Config {
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
-		type KittyRandomness: Randomness<H256, u32>;
+		type KittyRandomness: Randomness<Self::Hash, Self::BlockNumber>;
 
+		#[pallet::constant]
+		type MaxKittyOwned: Get<u32>;
 
+		type Currency: Currency<Self::AccountId>;
 	}
 
 	// The pallet's runtime storage items.
@@ -71,11 +78,46 @@ pub mod pallet {
 
 	#[pallet::storage]
 	#[pallet::getter(fn all_kitties_count)]
-	pub type AllKittiesCount<T:Config> = StorageValue<_, u64, ValueQuery>;
+	pub(super) type AllKittiesCount<T: Config> = StorageValue<_, u64, ValueQuery>;
 
+	#[pallet::storage]
+	#[pallet::getter(fn get_nonce)]
+	pub(super) type Nonce<T: Config> = StorageValue<_, u64, ValueQuery>;
 
+	#[pallet::storage]
+	#[pallet::getter(fn kitties)]
+	pub(super) type Kitties<T: Config> = StorageMap<_, Blake2_128Concat, T::Hash, Kitty<T>>;
 
+	#[pallet::storage]
+	#[pallet::getter(fn kitties_owned)]
+	pub(super) type KittiesOwned<T: Config> = StorageMap<
+		_,
+		Twox64Concat,
+		T::AccountId,
+		BoundedVec<T::Hash, T::MaxKittyOwned>,
+		ValueQuery,
+	>;
 
+	#[pallet::genesis_config]
+	pub struct GenesisConfig<T: Config> {
+		pub kitties: Vec<(T::AccountId, [u8; 16], Gender)>,
+	}
+
+	#[cfg(feature = "std")]
+	impl<T: Config> Default for GenesisConfig<T> {
+		fn default() -> GenesisConfig<T> {
+			GenesisConfig { kitties: vec![] }
+		}
+	}
+
+	#[pallet::genesis_build]
+	impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
+		fn build(&self) {
+			for (acct, dna, gender) in &self.kitties {
+				let _ = <Pallet<T>>::mint(acct, Some(dna.clone()), Some(gender.clone()));
+			}
+		}
+	}
 
 	// Pallets use events to inform users when important changes are made.
 	// https://docs.substrate.io/main-docs/build/events-errors/
@@ -85,6 +127,11 @@ pub mod pallet {
 		/// Event documentation should end with an array that provides descriptive names for event
 		/// parameters. [something, who]
 		SomethingStored(u32, T::AccountId),
+
+		Created(T::AccountId, T::Hash),
+		PriceSet(T::AccountId, T::Hash, Option<BalanceOf<T>>),
+		Transferred(T::AccountId, T::AccountId, T::Hash),
+		Bought(T::AccountId, T::AccountId, T::Hash, BalanceOf<T>),
 	}
 
 	// Errors inform users that something went wrong.
@@ -94,61 +141,87 @@ pub mod pallet {
 		NoneValue,
 		/// Errors should have helpful documentation associated with them.
 		StorageOverflow,
+
+		KittyCountOverflow,
+		ExceedMaxKittyOwned,
+		BuyerIsKittyOwner,
+		TransferToSelf,
+		KittyNotExist,
+		NotKittyOwner,
+		KittyNotForSale,
+		KittyBidPriceTooLow,
+		NotEnoughBalance,
 	}
+
+	#[pallet::hooks]
+	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {}
 
 	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
 	// These functions materialize as "extrinsics", which are often compared to transactions.
 	// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-		/// An example dispatchable that takes a singles value as a parameter, writes the value to
-		/// storage and emits an event. This function must be dispatched by a signed extrinsic.
-		#[pallet::weight(10_000 + T::DbWeight::get().writes(1).ref_time())]
-		pub fn do_something(origin: OriginFor<T>, something: u32) -> DispatchResult {
-			// Check that the extrinsic was signed and get the signer.
-			// This function will return an error if the extrinsic is not signed.
-			// https://docs.substrate.io/main-docs/build/origins/
-			let who = ensure_signed(origin)?;
-
-			// Update storage.
-			<Something<T>>::put(something);
-
-			// Emit an event.
-			Self::deposit_event(Event::SomethingStored(something, who));
-			// Return a successful DispatchResultWithPostInfo
-			Ok(())
-		}
-
-		/// An example dispatchable that may throw a custom error.
 		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1).ref_time())]
-		pub fn cause_error(origin: OriginFor<T>) -> DispatchResult {
-			let _who = ensure_signed(origin)?;
+		pub fn create_kitty(origin: OriginFor<T>) -> DispatchResult {
+			let sender = ensure_signed(origin)?;
 
-			// Read a value from storage.
-			match <Something<T>>::get() {
-				// Return an error if the value has not been set.
-				None => return Err(Error::<T>::NoneValue.into()),
-				Some(old) => {
-					// Increment the value read from storage; will error in the event of overflow.
-					let new = old.checked_add(1).ok_or(Error::<T>::StorageOverflow)?;
-					// Update the value in storage with the incremented result.
-					<Something<T>>::put(new);
-					Ok(())
-				},
-			}
+			let kitty_id = Self::mint(&sender.clone(), None, None)?;
+
+			Self::deposit_event(Event::Created(sender, kitty_id));
+
+			Ok(())
 		}
 	}
 
-	impl<T: Config> Kitty<T, T>{
-		pub fn gender(dna: T::Hash )-> Gender{
-			if dna.as_ref()[0] % 2 == 0{
+	impl<T: Config> Pallet<T> {
+		pub fn gender() -> Gender {
+			let dna = T::KittyRandomness::random(&b"gender"[..]).0;
+			if dna.as_ref()[0] % 2 == 0 {
 				Gender::Male
-			}else{
+			} else {
 				Gender::Female
 			}
 		}
+
+		fn gen_dna() -> [u8; 16] {
+			let payload = (
+				T::KittyRandomness::random(&b"dna"[..]).0,
+				<frame_system::Pallet<T>>::block_number(),
+			);
+			payload.using_encoded(blake2_128)
+		}
+
+		fn increment_none() -> DispatchResult {
+			Nonce::<T>::try_mutate(|nonce| {
+				let next = nonce.checked_add(1).ok_or("Overflow")?;
+				*nonce = next;
+				Ok(().into())
+			})
+		}
+
+		fn random_hash(sender: &T::AccountId) -> T::Hash {
+			let nonce = Self::get_nonce();
+			let seed = T::KittyRandomness::random_seed();
+
+			T::Hashing::hash_of(&(seed, sender, nonce))
+		}
+
+		fn mint(
+			owner: &T::AccountId,
+			dna: Option<[u8; 16]>,
+			gender: Option<Gender>,
+		) -> Result<T::Hash, Error<T>> {
+			let kitty = Kitty::<T> {
+				id: dna.unwrap_or_else(Self::gen_dna),
+				dna: dna.unwrap_or_else(Self::gen_dna),
+				price: None,
+				gender: gender.unwrap_or_else(Self::gender),
+				owner: owner.clone(),
+			};
+
+			let kitty_id = T::Hashing::hash_of(&kitty);
+
+			Ok(kitty_id)
+		}
 	}
-
-
-
 }
