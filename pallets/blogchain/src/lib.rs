@@ -16,11 +16,30 @@ pub use pallet::*;
 
 #[frame_support::pallet]
 pub mod pallet {
-	use frame_support::pallet_prelude::*;
+	use frame_support::{
+		inherent::Vec, pallet_prelude::*, sp_runtime::traits::Hash, traits::Currency,
+		traits::ExistenceRequirement, transactional,
+	};
 	use frame_system::pallet_prelude::*;
+
+	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
+	#[scale_info(skip_type_params(T))]
+	pub struct BlogPost<T: Config> {
+		pub content: Vec<u8>,
+		pub author: <T as frame_system::Config>::AccountId,
+	}
+
+	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
+	#[scale_info(skip_type_params(T))]
+	pub struct BlogPostComment<T: Config> {
+		pub content: Vec<u8>,
+		pub author: T::AccountId,
+		pub blog_post_id: T::Hash,
+	}
 
 	#[pallet::pallet]
 	#[pallet::generate_store(pub(super) trait Store)]
+	#[pallet::without_storage_info]
 	pub struct Pallet<T>(_);
 
 	/// Configure the pallet by specifying the parameters and types on which it depends.
@@ -28,6 +47,17 @@ pub mod pallet {
 	pub trait Config: frame_system::Config {
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+
+		type Currency: Currency<Self::AccountId>;
+
+		#[pallet::constant]
+		type BlogPostMinBytes: Get<u32>;
+		#[pallet::constant]
+		type BlogPostMaxBytes: Get<u32>;
+		#[pallet::constant]
+		type BlogPostCommentMinBytes: Get<u32>;
+		#[pallet::constant]
+		type BlogPostCommentMaxBytes: Get<u32>;
 	}
 
 	// The pallet's runtime storage items.
@@ -38,6 +68,15 @@ pub mod pallet {
 	// https://docs.substrate.io/main-docs/build/runtime-storage/#declaring-storage-items
 	pub type Something<T> = StorageValue<_, u32>;
 
+	#[pallet::storage]
+	#[pallet::getter(fn blog_posts)]
+	pub(super) type BlogPosts<T: Config> = StorageMap<_, Twox64Concat, T::Hash, BlogPost<T>>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn blog_post_comment)]
+	pub(super) type BlogPostComments<T: Config> =
+		StorageMap<_, Twox64Concat, T::Hash, Vec<BlogPostComment<T>>>;
+
 	// Pallets use events to inform users when important changes are made.
 	// https://docs.substrate.io/main-docs/build/events-errors/
 	#[pallet::event]
@@ -46,6 +85,9 @@ pub mod pallet {
 		/// Event documentation should end with an array that provides descriptive names for event
 		/// parameters. [something, who]
 		SomethingStored(u32, T::AccountId),
+		BlogPostCreated(Vec<u8>, T::AccountId, T::Hash),
+		BlogPostCommentCreated(Vec<u8>, T::AccountId, T::Hash),
+		Tipped(T::AccountId, T::Hash),
 	}
 
 	// Errors inform users that something went wrong.
@@ -55,6 +97,13 @@ pub mod pallet {
 		NoneValue,
 		/// Errors should have helpful documentation associated with them.
 		StorageOverflow,
+
+		BlogPostNotEnoughBytes,
+		BlogPostTooManyBytes,
+		BlogPostCommentNotEnoughBytes,
+		BlogPostCommentTooManyBytes,
+		BlogPostNotFound,
+		TipperIsAuthor,
 	}
 
 	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
@@ -97,6 +146,33 @@ pub mod pallet {
 					Ok(())
 				},
 			}
+		}
+
+		#[pallet::weight(10000)]
+		pub fn create_blog_post(origin: OriginFor<T>, content: Vec<u8>) -> DispatchResult {
+			let author = ensure_signed(origin)?;
+
+			ensure!(
+				(content.len() as u32) > T::BlogPostMinBytes::get(),
+				Error::<T>::BlogPostNotEnoughBytes
+			);
+
+			ensure!(
+				(content.len() as u32) < T::BlogPostMaxBytes::get(),
+				Error::<T>::BlogPostTooManyBytes
+			);
+
+			let blog_post = BlogPost::<T> { content: content.clone(), author: author.clone() };
+			let blog_post_id = T::Hashing::hash_of(&blog_post);
+
+			BlogPosts::<T>::insert(blog_post_id, blog_post);
+
+			let comments_vec: Vec<BlogPostComment<T>> = Vec::new();
+			BlogPostComments::<T>::insert(blog_post_id, comments_vec);
+
+			Self::deposit_event(Event::BlogPostCreated(content, author, blog_post_id));
+
+			Ok(())
 		}
 	}
 }

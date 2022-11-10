@@ -21,6 +21,9 @@ use frame_support::{
 };
 use sp_runtime::{traits::Hash, RuntimeDebug};
 
+#[cfg(feature = "std")]
+use serde::{Deserialize, Serialize};
+
 use scale_info::TypeInfo;
 
 use sp_io::hashing::blake2_128;
@@ -29,7 +32,9 @@ type AccountOf<T> = <T as frame_system::Config>::AccountId;
 type BalanceOf<T> =
 	<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Encode, Decode, Clone, Eq, PartialEq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+#[scale_info(skip_type_params(T))]
 pub struct Kitty<T: Config> {
 	pub id: [u8; 16],
 	pub dna: [u8; 16],
@@ -39,6 +44,7 @@ pub struct Kitty<T: Config> {
 }
 
 #[derive(Encode, Decode, Clone, Eq, PartialEq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+#[scale_info(skip_type_params(T))]
 pub enum Gender {
 	Male,
 	Female,
@@ -52,6 +58,7 @@ pub mod pallet {
 
 	#[pallet::pallet]
 	#[pallet::generate_store(pub(super) trait Store)]
+	#[pallet::without_storage_info]
 	pub struct Pallet<T>(_);
 
 	/// Configure the pallet by specifying the parameters and types on which it depends.
