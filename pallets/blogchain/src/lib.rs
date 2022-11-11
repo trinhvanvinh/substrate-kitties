@@ -174,5 +174,71 @@ pub mod pallet {
 
 			Ok(())
 		}
+
+		#[pallet::weight(5000)]
+		pub fn create_blog_post_comment(
+			origin: OriginFor<T>,
+			content: Vec<u8>,
+			blog_post_id: T::Hash,
+		) -> DispatchResult {
+			let comment_author = ensure_signed(origin)?;
+
+			ensure!(
+				(content.len() as u32) > T::BlogPostCommentMinBytes::get(),
+				Error::<T>::BlogPostCommentNotEnoughBytes
+			);
+			ensure!(
+				(content.len() as u32) < T::BlogPostCommentMaxBytes::get(),
+				Error::<T>::BlogPostCommentTooManyBytes
+			);
+
+			let blog_post_comment = BlogPostComment::<T> {
+				content: content.clone(),
+				author: comment_author.clone(),
+				blog_post_id,
+			};
+
+			BlogPostComments::<T>::mutate(blog_post_id, |post_comment| match post_comment {
+				None => Err(()),
+				Some(vec) => {
+					vec.push(blog_post_comment);
+					Ok(())
+				},
+			})
+			.map_err(|_| Error::<T>::BlogPostNotFound);
+
+			Self::deposit_event(Event::BlogPostCommentCreated(
+				content,
+				comment_author,
+				blog_post_id,
+			));
+
+			Ok(())
+		}
+
+		#[pallet::weight(5000)]
+		pub fn tip_blog_post(
+			origin: OriginFor<T>,
+			blog_post_id: T::Hash,
+			amount: <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance,
+		) -> DispatchResult {
+			let tipper = ensure_signed(origin)?;
+
+			let blog_post = Self::blog_posts(blog_post_id).ok_or(Error::<T>::BlogPostNotFound)?;
+			let blog_post_author = blog_post.author;
+
+			ensure!(tipper != blog_post_author, Error::<T>::TipperIsAuthor);
+
+			T::Currency::transfer(
+				&tipper,
+				&blog_post_author,
+				amount,
+				ExistenceRequirement::KeepAlive,
+			);
+
+			Self::deposit_event(Event::Tipped(tipper, blog_post_id));
+
+			Ok(())
+		}
 	}
 }
