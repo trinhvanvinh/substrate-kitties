@@ -32,8 +32,7 @@ type AccountOf<T> = <T as frame_system::Config>::AccountId;
 type BalanceOf<T> =
 	<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-#[derive(Encode, Decode, Clone, Eq, PartialEq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
 #[scale_info(skip_type_params(T))]
 pub struct Kitty<T: Config> {
 	pub id: [u8; 16],
@@ -43,7 +42,7 @@ pub struct Kitty<T: Config> {
 	pub owner: AccountOf<T>,
 }
 
-#[derive(Encode, Decode, Clone, Eq, PartialEq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
 #[scale_info(skip_type_params(T))]
 pub enum Gender {
 	Male,
@@ -105,26 +104,26 @@ pub mod pallet {
 		ValueQuery,
 	>;
 
-	#[pallet::genesis_config]
-	pub struct GenesisConfig<T: Config> {
-		pub kitties: Vec<(T::AccountId, [u8; 16], Gender)>,
-	}
+	// #[pallet::genesis_config]
+	// pub struct GenesisConfig<T: Config> {
+	// 	//pub kitties: Vec<(T::AccountId, [u8; 16], Gender)>,
+	// }
 
-	#[cfg(feature = "std")]
-	impl<T: Config> Default for GenesisConfig<T> {
-		fn default() -> GenesisConfig<T> {
-			GenesisConfig { kitties: vec![] }
-		}
-	}
+	// #[cfg(feature = "std")]
+	// impl<T: Config> Default for GenesisConfig<T> {
+	// 	fn default() -> GenesisConfig<T> {
+	// 		GenesisConfig { kitties: vec![] }
+	// 	}
+	// }
 
-	#[pallet::genesis_build]
-	impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
-		fn build(&self) {
-			for (acct, dna, gender) in &self.kitties {
-				let _ = <Pallet<T>>::mint(acct, Some(dna.clone()), Some(gender.clone()));
-			}
-		}
-	}
+	// #[pallet::genesis_build]
+	// impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
+	// 	fn build(&self) {
+	// 		for (acct, dna, gender) in &self.kitties {
+	// 			let _ = <Pallet<T>>::mint(acct, Some(dna.clone()), Some(gender.clone()));
+	// 		}
+	// 	}
+	// }
 
 	// Pallets use events to inform users when important changes are made.
 	// https://docs.substrate.io/main-docs/build/events-errors/
