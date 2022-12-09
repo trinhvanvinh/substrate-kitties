@@ -1,10 +1,12 @@
-use crate as pallet_template;
-use frame_support::traits::{ConstU16, ConstU64};
+use crate as pallet_dex;
+use frame_support::traits::{ConstU128, ConstU16, ConstU32, ConstU64};
+use frame_support::{parameter_types, PalletId};
 use frame_system as system;
+use frame_system::EnsureRoot;
 use sp_core::H256;
 use sp_runtime::{
 	testing::Header,
-	traits::{BlakeTwo256, IdentityLookup},
+	traits::{BlakeTwo256, Identity, IdentityLookup},
 };
 
 type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Test>;
@@ -18,9 +20,28 @@ frame_support::construct_runtime!(
 		UncheckedExtrinsic = UncheckedExtrinsic,
 	{
 		System: frame_system,
-		TemplateModule: pallet_template,
+		Balances: pallet_balances ,
+		Assets: pallet_assets,
+		PalletDexModule: pallet_dex,
 	}
 );
+
+impl pallet_assets::Config for Test {
+	type RuntimeEvent = RuntimeEvent;
+	type Balance = u128;
+	type AssetId = u32;
+	type Currency = Balances;
+	type ForceOrigin = EnsureRoot<u64>;
+	type AssetDeposit = ConstU128<1>;
+	type AssetAccountDeposit = ConstU128<10>;
+	type MetadataDepositBase = ConstU128<1>;
+	type MetadataDepositPerByte = ConstU128<1>;
+	type ApprovalDeposit = ConstU128<1>;
+	type StringLimit = ConstU32<50>;
+	type Freezer = ();
+	type Extra = ();
+	type WeightInfo = ();
+}
 
 impl system::Config for Test {
 	type BaseCallFilter = frame_support::traits::Everything;
@@ -40,7 +61,7 @@ impl system::Config for Test {
 	type BlockHashCount = ConstU64<250>;
 	type Version = ();
 	type PalletInfo = PalletInfo;
-	type AccountData = ();
+	type AccountData = pallet_balances::AccountData<u128>;
 	type OnNewAccount = ();
 	type OnKilledAccount = ();
 	type SystemWeightInfo = ();
@@ -48,12 +69,49 @@ impl system::Config for Test {
 	type OnSetCode = ();
 	type MaxConsumers = frame_support::traits::ConstU32<16>;
 }
-
-impl pallet_template::Config for Test {
+impl pallet_balances::Config for Test {
+	type Balance = u128;
+	type DustRemoval = ();
 	type RuntimeEvent = RuntimeEvent;
+	type ExistentialDeposit = ConstU128<1>;
+	type AccountStore = System;
+	type WeightInfo = ();
+	type MaxLocks = ();
+	type MaxReserves = ();
+	type ReserveIdentifier = [u8; 8];
+}
+
+parameter_types! {
+	pub const DexPalletId: PalletId = PalletId(*b"dex_mock");
+}
+
+impl pallet_dex::Config for Test {
+	type RuntimeEvent = RuntimeEvent;
+	type PalletId = DexPalletId;
+	type Currency = Balances;
+	type AssetBalance = u128;
+	type AssetToCurrencyBalance = Identity;
+	type CurrencyToAssetBalance = Identity;
+	type AssetId = u32;
+	type Assets = Assets;
+	type AssetRegistry = Assets;
+	type ProviderFeeNumerator = ConstU128<3>;
+	type ProviderFeeDenominator = ConstU128<1000>;
+	type MinDeposit = ConstU128<MIN_DEPOSIT>;
 }
 
 // Build genesis storage according to the mock runtime.
 pub fn new_test_ext() -> sp_io::TestExternalities {
 	system::GenesisConfig::default().build_storage::<Test>().unwrap().into()
 }
+
+pub const ACCOUNT_A: u64 = 0;
+pub const ACCOUNT_B: u64 = 1;
+pub const ACCOUNT_C: u64 = 2;
+pub const INIT_BALANCE: u128 = 1_000_000_000_000_000;
+pub const INIT_LIQUIDITY: u128 = 1_000_000_000_000;
+pub const MIN_DEPOSIT: u128 = 1;
+pub const ASSET_A: u32 = 100;
+pub const ASSET_B: u32 = 101;
+pub const LIQ_TOKEN_A: u32 = 200;
+pub const LIQ_TOKEN_B: u32 = 201;

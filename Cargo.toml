@@ -5,6 +5,7 @@ members = [
     # "pallets/kitties",
     # "pallets/blogchain",
     "pallets/tictactoe",
+    "pallets/dex",
     "runtime",
 ]
 [profile.release]
