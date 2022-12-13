@@ -4,8 +4,11 @@ members = [
     # "pallets/template",
     # "pallets/kitties",
     # "pallets/blogchain",
-    "pallets/tictactoe",
-    "pallets/dex",
+    #"pallets/tictactoe",
+    #"pallets/dex",
+    "pallets/acala/dex",
+    "pallets/acala/modules/traits",
+    "primitives",
     "runtime",
 ]
 [profile.release]

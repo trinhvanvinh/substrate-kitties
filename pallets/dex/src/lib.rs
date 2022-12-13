@@ -314,6 +314,7 @@ pub mod pallet {
 			ensure!(currency_amount >= T::MinDeposit::get(), Error::<T>::CurrencyAmountTooLow);
 			ensure!(token_amount > Zero::zero(), Error::<T>::TokenAmountIsZero);
 			if T::Assets::total_issuance(asset_id.clone()).is_zero() {
+				println!("aaa {:?}", T::Assets::total_issuance(asset_id.clone()));
 				Err(Error::<T>::AssetNotFound)?
 			}
 			if <Exchanges<T>>::contains_key(asset_id.clone()) {
