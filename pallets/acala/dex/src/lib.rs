@@ -13,9 +13,11 @@ pub use pallet::*;
 
 // #[cfg(feature = "runtime-benchmarks")]
 // mod benchmarking;
-use frame_support::pallet_prelude::*;
+use frame_support::{pallet_prelude::*, PalletId};
 use frame_system::pallet_prelude::*;
-//use primitives::*;
+use module_support::{DEXIncentives, Erc20InfoMapping};
+use module_traits::{Happened, MultiCurrencyExtended};
+use primitives::{Balance, CurrencyId, TradingPair};
 
 pub struct ProvisioningParameters<Balance, BlockNumber> {
 	min_contribution: (Balance, Balance),
@@ -50,7 +52,28 @@ pub mod pallet {
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
-		//type Currency: Multi
+		type Currency: MultiCurrencyExtended<
+			Self::AccountId,
+			CurrencyId = CurrencyId,
+			Balance = Balance,
+		>;
+		#[pallet::constant]
+		type GetExchangeFee: Get<(u32, u32)>;
+
+		#[pallet::constant]
+		type TradingPathLimit: Get<u32>;
+
+		#[pallet::constant]
+		type PalletId: Get<PalletId>;
+
+		type Erc20InfoMapping: Erc20InfoMapping;
+
+		type DEXIncentives: DEXIncentives<Self::AccountId, CurrencyId, Balance>;
+
+		#[pallet::constant]
+		type ExtendedProvisioningBlocks: Get<Self::BlockNumber>;
+
+		type OnLiquidityPoolUpdated: Happened<(TradingPair, Balance, Balance)>;
 	}
 
 	// The pallet's runtime storage items.

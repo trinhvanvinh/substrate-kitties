@@ -7,7 +7,7 @@ members = [
     #"pallets/tictactoe",
     #"pallets/dex",
     "pallets/acala/dex",
-    "pallets/acala/modules/traits",
+    "pallets/acala/modules/*",
     "primitives",
     "runtime",
 ]

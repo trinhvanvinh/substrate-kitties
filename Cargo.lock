@@ -16,11 +16,13 @@ dependencies = [
 name = "acala-primitives"
 version = "4.0.0-dev"
 dependencies = [
+ "bstringify",
  "frame-benchmarking",
  "frame-support",
  "frame-system",
  "parity-scale-codec",
  "scale-info",
+ "serde",
  "sp-core",
  "sp-io",
  "sp-runtime",
@@ -584,6 +586,12 @@ checksum = "ba3569f383e8f1598449f1a423e72e99569137b47740b1da11ef19af3d5c3223"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "bstringify"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd769563b4ea2953e2825c9e6b7470a5f55f67e0be00030bf3e390a2a6071f64"
 
 [[package]]
 name = "build-helper"
@@ -3570,6 +3578,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "module-support"
+version = "4.0.0-dev"
+dependencies = [
+ "acala-primitives",
+ "frame-benchmarking",
+ "frame-support",
+ "frame-system",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+]
+
+[[package]]
 name = "module-traits"
 version = "4.0.0-dev"
 dependencies = [
@@ -4056,6 +4079,8 @@ dependencies = [
  "frame-benchmarking",
  "frame-support",
  "frame-system",
+ "module-support",
+ "module-traits",
  "parity-scale-codec",
  "scale-info",
  "sp-core",
