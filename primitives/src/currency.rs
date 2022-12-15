@@ -1,5 +1,8 @@
 use crate::evm::EvmAddress;
 use bstringify::bstringify;
+use codec::{Decode, Encode, MaxEncodedLen};
+use scale_info::TypeInfo;
+use sp_runtime::RuntimeDebug;
 
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
@@ -375,12 +378,14 @@ pub trait TokenInfo {
 }
 
 create_currency_id! {
+	#[derive(Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, MaxEncodedLen)]
 	pub enum TokenSymbol{
 		ACA("Acala", 12) =0,
 		AUSD("Acala Dollar", 12) = 1,
 	}
 }
 
+#[derive(Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, MaxEncodedLen)]
 pub enum CurrencyId {
 	Token(TokenSymbol),
 }

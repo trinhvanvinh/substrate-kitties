@@ -15,17 +15,21 @@ pub use pallet::*;
 // mod benchmarking;
 use frame_support::{pallet_prelude::*, PalletId};
 use frame_system::pallet_prelude::*;
-use module_support::{DEXIncentives, Erc20InfoMapping};
+use module_support::{DEXIncentives, Erc20InfoMapping, ExchangeRate};
 use module_traits::{Happened, MultiCurrencyExtended};
 use primitives::{Balance, CurrencyId, TradingPair};
 
+use codec::{Decode, Encode, MaxEncodedLen};
+use scale_info::TypeInfo;
+
+#[derive(Decode, Encode, MaxEncodedLen, TypeInfo, Clone, RuntimeDebug, Copy, PartialEq, Eq)]
 pub struct ProvisioningParameters<Balance, BlockNumber> {
 	min_contribution: (Balance, Balance),
 	target_provision: (Balance, Balance),
 	accumulated_provision: (Balance, Balance),
 	not_before: BlockNumber,
 }
-
+#[derive(Decode, Encode, MaxEncodedLen, TypeInfo, Clone, RuntimeDebug, Copy, PartialEq, Eq)]
 pub enum TradingPairStatus<Balance, BlockNumber> {
 	Disabled,
 	Provisioning(ProvisioningParameters<Balance, BlockNumber>),
@@ -84,6 +88,33 @@ pub mod pallet {
 	// https://docs.substrate.io/main-docs/build/runtime-storage/#declaring-storage-items
 	pub type Something<T> = StorageValue<_, u32>;
 
+	#[pallet::storage]
+	#[pallet::getter(fn liquidity_pool)]
+	pub type LiquidityPool<T: Config> =
+		StorageMap<_, Twox64Concat, TradingPair, (Balance, Balance), ValueQuery>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn trading_pair_statuses)]
+	pub type TradingPairStatuses<T: Config> =
+		StorageMap<_, Twox64Concat, TradingPairStatus<Balance, T::BlockNumber>, ValueQuery>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn provisioning_pool)]
+	pub type ProvisioningPool<T: Config> = StorageDoubleMap<
+		_,
+		Twox64Concat,
+		TradingPair,
+		Twox64Concat,
+		T::AccountId,
+		(Balance, Balance),
+		ValueQuery,
+	>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn initial_share_exchange_rates)]
+	pub type InitialShareExchangeRates<T: Config> =
+		StorageMap<_, Twox64Concat, TradingPair, (ExchangeRate, ExchangeRate), ValueQuery>;
+
 	// Pallets use events to inform users when important changes are made.
 	// https://docs.substrate.io/main-docs/build/events-errors/
 	#[pallet::event]
@@ -92,6 +123,24 @@ pub mod pallet {
 		/// Event documentation should end with an array that provides descriptive names for event
 		/// parameters. [something, who]
 		SomethingStored(u32, T::AccountId),
+		// who, currency0, contribute0, currency1, contribute1
+		AddProvision(T::AccountId, CurrencyId, Balance, CurrencyId, Balance),
+		// who, currency_0, pool0, currency_1, pool1, share_increment
+		AddLiquidity(T::AccountId, CurrencyId, Balance, CurrencyId, Balance, Balance),
+		// who, currency_0, pool0, currency1, pool1, share_decrement
+		RemoveLiquidity(T::AccountId, CurrencyId, Balance, CurrencyId, Balance, Balance),
+		//trader, path, liquidity_changes
+		Swap(T::AccountId, Vec<CurrencyId>, Vec<Balance>),
+		//
+		EnableTradingPair(TradingPair),
+		ListProvisioning(TradingPair),
+		DisableTradingPair(TradingPair),
+		// tradingpair, pool_0, pool_1, share_amount
+		ProvisioningToEnabled(TradingPair, Balance, Balance, Balance),
+		//who, currency_0, contribution_0, currency_1, contribution_1
+		RefundProvision(T::AccountId, CurrencyId, Balance, CurrencyId, Balance),
+		//tradingpair, accumulated_provision_0, accumulated_provision_1
+		ProvisioningAborted(TradingPair, Balance, Balance),
 	}
 
 	// Errors inform users that something went wrong.
@@ -101,6 +150,29 @@ pub mod pallet {
 		NoneValue,
 		/// Errors should have helpful documentation associated with them.
 		StorageOverflow,
+
+		AlreadyEnabled,
+		MustBeProvisioning,
+		MustBeDisabled,
+		NotAllowedList,
+		InvalidContributionIncrement,
+		InvalidLiquidityIncrement,
+		InvalidCurrencyId,
+		InvalidTradingPathLength,
+		InsufficientTargetAmount,
+		ExcessiveSupplyAmount,
+		InsufficientLiquidity,
+		ZeroSupplyAmount,
+		ZeroTargetAmount,
+		UnacceptableShareIncrement,
+		UnacceptableLiquidityWithdrawn,
+		InvariantCheckFailed,
+		UnqualifiedProvision,
+		StillProvisioning,
+		AssetUnregistered,
+		InvalidTradingPath,
+		NotAllowedRefund,
+		CannotSwap,
 	}
 
 	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
