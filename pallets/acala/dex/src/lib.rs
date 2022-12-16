@@ -21,6 +21,7 @@ use primitives::{Balance, CurrencyId, TradingPair};
 
 use codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
+use frame_support::sp_runtime::traits::AccountIdConversion;
 
 #[derive(Decode, Encode, MaxEncodedLen, TypeInfo, Clone, RuntimeDebug, Copy, PartialEq, Eq)]
 pub struct ProvisioningParameters<Balance, BlockNumber> {
@@ -285,5 +286,11 @@ pub mod pallet {
 				},
 			}
 		}
+	}
+}
+
+impl<T: Config> Pallet<T> {
+	fn account_id() -> T::AccountId {
+		T::PalletId::get().into_account_truncating()
 	}
 }
