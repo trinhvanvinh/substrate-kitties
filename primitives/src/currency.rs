@@ -379,6 +379,7 @@ pub trait TokenInfo {
 
 create_currency_id! {
 	#[derive(Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, MaxEncodedLen)]
+	#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 	pub enum TokenSymbol{
 		ACA("Acala", 12) =0,
 		AUSD("Acala Dollar", 12) = 1,
@@ -386,6 +387,7 @@ create_currency_id! {
 }
 
 #[derive(Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, MaxEncodedLen)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 pub enum CurrencyId {
 	Token(TokenSymbol),
 }

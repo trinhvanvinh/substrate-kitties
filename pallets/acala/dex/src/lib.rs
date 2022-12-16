@@ -95,8 +95,13 @@ pub mod pallet {
 
 	#[pallet::storage]
 	#[pallet::getter(fn trading_pair_statuses)]
-	pub type TradingPairStatuses<T: Config> =
-		StorageMap<_, Twox64Concat, TradingPairStatus<Balance, T::BlockNumber>, ValueQuery>;
+	pub type TradingPairStatuses<T: Config> = StorageMap<
+		_,
+		Twox64Concat,
+		TradingPair,
+		TradingPairStatus<Balance, T::BlockNumber>,
+		ValueQuery,
+	>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn provisioning_pool)]
@@ -114,6 +119,69 @@ pub mod pallet {
 	#[pallet::getter(fn initial_share_exchange_rates)]
 	pub type InitialShareExchangeRates<T: Config> =
 		StorageMap<_, Twox64Concat, TradingPair, (ExchangeRate, ExchangeRate), ValueQuery>;
+
+	#[pallet::genesis_config]
+	pub struct GenesisConfig<T: Config> {
+		pub initial_listing_trading_pairs:
+			Vec<(TradingPair, (Balance, Balance), (Balance, Balance), T::BlockNumber)>,
+		pub initial_enabled_trading_pairs: Vec<TradingPair>,
+		pub initial_added_liquidity_pools:
+			Vec<(T::AccountId, Vec<(TradingPair, (Balance, Balance))>)>,
+	}
+
+	#[cfg(feature = "std")]
+	impl<T: Config> Default for GenesisConfig<T> {
+		fn default() -> Self {
+			GenesisConfig {
+				initial_listing_trading_pairs: vec![],
+				initial_enabled_trading_pairs: vec![],
+				initial_added_liquidity_pools: vec![],
+			}
+		}
+	}
+
+	#[pallet::genesis_build]
+	impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
+		fn build(&self) {
+			self.initial_listing_trading_pairs.iter().for_each(
+				|(trading_pair, min_contribution, target_provision, not_before)| {
+					TradingPairStatuses::<T>::insert(
+						trading_pair,
+						TradingPairStatus::Provisioning(ProvisioningParameters {
+							min_contribution: *min_contribution,
+							target_provision: *target_provision,
+							accumulated_provision: Default::default(),
+							not_before: *not_before,
+						}),
+					)
+				},
+			);
+
+			self.initial_enabled_trading_pairs.iter().for_each(|trading_pair| {
+				TradingPairStatuses::<T>::insert(trading_pair, TradingPairStatus::<_, _>::Enabled);
+			});
+
+			self.initial_added_liquidity_pools.iter().for_each(|(who, trading_pairs_data)| {
+				trading_pairs_data.iter().for_each(
+					|(trading_pair, (deposit_amount_0, deposit_amount_1))| {
+						//let result = match <Pallet<T>>::trading_pair_statuses(trading_pair) {
+						// TradingPairStatus::<_, _>::Enabled => <Pallet<T>>::do_add_liquidity(
+						// 	who,
+						// 	trading_pair.first(),
+						// 	trading_pair.second(),
+						// 	*deposit_amount_0,
+						// 	*deposit_amount_1,
+						// 	Default::default(),
+						// 	false,
+						// ),
+						//_ => Err(Error::<T>::MustBeEnabled.into()),
+						//};
+						//assert!(result.is_ok(), "genesis add liquidity pool failed");
+					},
+				);
+			});
+		}
+	}
 
 	// Pallets use events to inform users when important changes are made.
 	// https://docs.substrate.io/main-docs/build/events-errors/
@@ -154,6 +222,7 @@ pub mod pallet {
 		AlreadyEnabled,
 		MustBeProvisioning,
 		MustBeDisabled,
+		MustBeEnabled,
 		NotAllowedList,
 		InvalidContributionIncrement,
 		InvalidLiquidityIncrement,
