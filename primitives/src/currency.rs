@@ -1,8 +1,12 @@
+#![allow(clippy::from_over_into)]
+
 use crate::evm::EvmAddress;
+use crate::BlockNumber;
 use bstringify::bstringify;
 use codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_runtime::RuntimeDebug;
+use sp_std::prelude::*;
 
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
@@ -378,16 +382,201 @@ pub trait TokenInfo {
 }
 
 create_currency_id! {
-	#[derive(Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, MaxEncodedLen)]
+	#[derive(Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, MaxEncodedLen, Copy, PartialOrd)]
 	#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 	pub enum TokenSymbol{
 		ACA("Acala", 12) =0,
 		AUSD("Acala Dollar", 12) = 1,
+		DOT("Polkadot", 10) = 2,
 	}
 }
 
-#[derive(Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, MaxEncodedLen)]
+pub type ForeignAssetId = u16;
+pub type Erc20Id = u32;
+pub type Lease = BlockNumber;
+
+#[derive(
+	Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, MaxEncodedLen, Copy, PartialOrd,
+)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub enum DexShare {
+	Token(TokenSymbol),
+	Erc20(EvmAddress),
+	LiquidCrowdloan(Lease),
+	ForeignAsset(ForeignAssetId),
+	//StableAssetPoolToken(StableAssetPoolId)
+}
+
+#[derive(
+	Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, MaxEncodedLen, Copy, PartialOrd,
+)]
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 pub enum CurrencyId {
 	Token(TokenSymbol),
+	DexShare(DexShare, DexShare),
+	Erc20(EvmAddress),
+	LiquidCrowdloan(Lease),
+	ForeignAsset(ForeignAssetId),
+}
+
+impl CurrencyId {
+	pub fn is_token_currency_id(&self) -> bool {
+		matches!(self, CurrencyId::Token(_))
+	}
+
+	pub fn is_dex_share_currency_id(&self) -> bool {
+		matches!(self, CurrencyId::DexShare(_, _))
+	}
+
+	pub fn is_erc20_currency_id(&self) -> bool {
+		matches!(self, CurrencyId::Erc20(_))
+	}
+
+	pub fn is_liquid_crowdloan_currency_id(&self) -> bool {
+		matches!(self, CurrencyId::LiquidCrowdloan(_))
+	}
+
+	pub fn is_foreign_asset_currency_id(&self) -> bool {
+		matches!(self, CurrencyId::ForeignAsset(_))
+	}
+
+	pub fn is_trading_pair_currency_id(&self) -> bool {
+		matches!(
+			self,
+			CurrencyId::Token(_)
+				| CurrencyId::Erc20(_)
+				| CurrencyId::LiquidCrowdloan(_)
+				| CurrencyId::ForeignAsset(_)
+		)
+	}
+
+	// pub fn split_dex_share_currency_id(&self) -> Option<(Self, Self)> {
+	// 	match self {
+	// 		CurrencyId::DexShare(dex_share_0, dex_share_1) => {
+	// 			let currency_id_0: CurrencyId = (*dex_share_0).into();
+	// 			let currency_id_1: CurrencyId = (*dex_share_1).into();
+	// 			Some((currency_id_0, currency_id_1))
+	// 		},
+	// 		_ => None,
+	// 	}
+	// }
+
+	pub fn join_dex_share_currency_id(currency_id_0: Self, currency_id_1: Self) -> Option<Self> {
+		let dex_share_0 = match currency_id_0 {
+			CurrencyId::Token(symbol) => DexShare::Token(symbol),
+			CurrencyId::Erc20(address) => DexShare::Erc20(address),
+			CurrencyId::LiquidCrowdloan(lease) => DexShare::LiquidCrowdloan(lease),
+			CurrencyId::ForeignAsset(foreign_asset_id) => DexShare::ForeignAsset(foreign_asset_id),
+			// Unsupported
+			CurrencyId::DexShare(..) => return None,
+		};
+
+		let dex_share_1 = match currency_id_1 {
+			CurrencyId::Token(symbol) => DexShare::Token(symbol),
+			CurrencyId::Erc20(address) => DexShare::Erc20(address),
+			CurrencyId::LiquidCrowdloan(lease) => DexShare::LiquidCrowdloan(lease),
+			CurrencyId::ForeignAsset(foreign_asset_id) => DexShare::ForeignAsset(foreign_asset_id),
+
+			CurrencyId::DexShare(..) => return None,
+		};
+
+		Some(CurrencyId::DexShare(dex_share_0, dex_share_1))
+	}
+
+	pub fn erc20_address(&self) -> Option<EvmAddress> {
+		match self {
+			CurrencyId::Erc20(address) => Some(*address),
+			CurrencyId::Token(_) => EvmAddress::try_from(*self).ok(),
+			_ => None,
+		}
+	}
+}
+
+impl From<DexShare> for u32 {
+	fn from(val: DexShare) -> u32 {
+		let mut bytes = [0u8; 4];
+		match val {
+			DexShare::Token(token) => {
+				bytes[3] = token.into();
+			},
+			DexShare::Erc20(address) => {
+				let is_zero = |&&d: &&u8| -> bool { d == 0 };
+				let leading_zeros = address.as_bytes().iter().take_while(is_zero).count();
+				let index = if leading_zeros > 16 { 16 } else { leading_zeros };
+				bytes[..].copy_from_slice(&address[index..index + 4][..]);
+			},
+			DexShare::LiquidCrowdloan(lease) => {
+				bytes[..].copy_from_slice(&lease.to_be_bytes());
+			},
+			DexShare::ForeignAsset(foreign_asset_id) => {
+				bytes[2..].copy_from_slice(&foreign_asset_id.to_be_bytes());
+			},
+		}
+		u32::from_be_bytes(bytes)
+	}
+}
+
+impl Into<CurrencyId> for DexShare {
+	fn into(self) -> CurrencyId {
+		match self {
+			DexShare::Token(token) => CurrencyId::Token(token),
+			DexShare::Erc20(address) => CurrencyId::Erc20(address),
+			DexShare::LiquidCrowdloan(lease) => CurrencyId::LiquidCrowdloan(lease),
+			DexShare::ForeignAsset(foreign_asset_id) => CurrencyId::ForeignAsset(foreign_asset_id),
+		}
+	}
+}
+
+#[derive(
+	Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, MaxEncodedLen, Copy, PartialOrd,
+)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub enum CurrencyIdType {
+	Token,
+	DexShare,
+	StableAsset,
+	LiquidCrowdloan,
+	ForeignAsset,
+}
+
+#[derive(
+	Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, MaxEncodedLen, Copy, PartialOrd,
+)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub enum DexShareType {
+	Token,
+	Erc20,
+	LiquidCrowdloan,
+	ForeignAsset,
+	StableAssetPoolToken,
+}
+
+impl Into<DexShareType> for DexShare {
+	fn into(self) -> DexShareType {
+		match self {
+			DexShare::Token(_) => DexShareType::Token,
+			DexShare::Erc20(_) => DexShareType::Erc20,
+			DexShare::LiquidCrowdloan(_) => DexShareType::LiquidCrowdloan,
+			DexShare::ForeignAsset(_) => DexShareType::ForeignAsset,
+		}
+	}
+}
+
+pub const LCDOT: CurrencyId = CurrencyId::LiquidCrowdloan(13);
+
+#[derive(Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, Copy, PartialOrd)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub enum AssetIds {
+	Erc20(EvmAddress),
+	ForeignAssetId(ForeignAssetId),
+	NativeAssetId(CurrencyId),
+}
+
+#[derive(Encode, Decode, Eq, PartialEq, Clone, TypeInfo, RuntimeDebug, PartialOrd)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub struct AssetMetadata<Balance> {
+	pub name: Vec<u8>,
+	pub symbol: Vec<u8>,
+	pub decimals: u8,
+	pub minimal_balance: Balance,
 }

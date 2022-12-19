@@ -6,7 +6,7 @@
 pub mod arithmetic;
 pub mod currency;
 
-pub use currency::MultiCurrencyExtended;
+pub use currency::{MultiCurrency, MultiCurrencyExtended};
 
 pub trait Happened<T> {
 	fn happened(t: &T);

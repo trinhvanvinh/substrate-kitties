@@ -13,15 +13,16 @@ pub use pallet::*;
 
 // #[cfg(feature = "runtime-benchmarks")]
 // mod benchmarking;
+use frame_support::sp_runtime::FixedPointNumber;
 use frame_support::{pallet_prelude::*, PalletId};
 use frame_system::pallet_prelude::*;
 use module_support::{DEXIncentives, Erc20InfoMapping, ExchangeRate};
-use module_traits::{Happened, MultiCurrencyExtended};
+use module_traits::{Happened, MultiCurrency, MultiCurrencyExtended};
 use primitives::{Balance, CurrencyId, TradingPair};
 
 use codec::{Decode, Encode, MaxEncodedLen};
-use scale_info::TypeInfo;
 use frame_support::sp_runtime::traits::AccountIdConversion;
+use scale_info::TypeInfo;
 
 #[derive(Decode, Encode, MaxEncodedLen, TypeInfo, Clone, RuntimeDebug, Copy, PartialEq, Eq)]
 pub struct ProvisioningParameters<Balance, BlockNumber> {
@@ -292,5 +293,81 @@ pub mod pallet {
 impl<T: Config> Pallet<T> {
 	fn account_id() -> T::AccountId {
 		T::PalletId::get().into_account_truncating()
+	}
+
+	fn try_mutate_liquidity_pool<R, E>(
+		trading_pair: &TradingPair,
+		f: impl FnOnce((&Balance, &Balance)) -> sp_std::result::Result<R, E>,
+	) -> sp_std::result::Result<R, E> {
+		LiquidityPool::<T>::try_mutate(
+			trading_pair,
+			|(pool_0, pool_1)| -> sp_std::result::Result<R, E> {
+				let old_pool_0 = *pool_0;
+				let old_pool_1 = *pool_1;
+				f((pool_0, pool_1)).map(move |result| {
+					if *pool_0 != old_pool_0 || *pool_1 != old_pool_1 {
+						T::OnLiquidityPoolUpdated::happened(&(*trading_pair, *pool_0, *pool_1));
+					}
+					result
+				})
+			},
+		)
+	}
+
+	fn do_claim_dex_share(
+		who: &T::AccountId,
+		currency_id_a: CurrencyId,
+		currency_id_b: CurrencyId,
+	) -> DispatchResult {
+		let trading_pair = TradingPair::from_currency_ids(currency_id_a, currency_id_b)
+			.ok_or(Error::<T>::InvalidCurrencyId)?;
+
+		ensure!(
+			!matches!(
+				Self::trading_pair_statuses(trading_pair),
+				TradingPairStatus::<_, _>::Provisioning(_)
+			),
+			Error::<T>::StillProvisioning
+		);
+
+		ProvisioningPool::<T>::try_mutate_exists(
+			trading_pair,
+			who,
+			|maybe_contribution| -> DispatchResult {
+				if let Some((contribution_0, contribution_1)) = maybe_contribution.take() {
+					let (exchange_rate_0, exchange_rate_1) =
+						Self::initial_share_exchange_rates(trading_pair);
+					let shares_from_provision_0 = exchange_rate_0
+						.checked_mul_int(contribution_0)
+						.ok_or(Error::<T>::StorageOverflow)?;
+					let shares_from_provision_1 = exchange_rate_1
+						.checked_mul_int(contribution_1)
+						.ok_or(Error::<T>::StorageOverflow)?;
+
+					let shares_to_claim = shares_from_provision_0
+						.checked_add(shares_from_provision_1)
+						.ok_or(Error::<T>::StorageOverflow)?;
+
+					T::Currency::transfer(
+						trading_pair.dex_share_currency_id(),
+						Self::account_id(),
+						who,
+						shares_to_claim,
+					);
+
+					// decrease ref count
+					frame_system::Pallet::<T>::dec_consumers(who);
+				}
+
+				Ok(())
+			},
+		);
+
+		// clear initialShareExchangeRates once it is all claimed
+		if ProvisioningPool::<T>::iter_prefix(trading_pair).next().is_none() {
+			InitialShareExchangeRates::<T>::remove(trading_pair);
+		}
+
+		Ok(())
 	}
 }
