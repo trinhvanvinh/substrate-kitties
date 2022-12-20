@@ -16,7 +16,9 @@ pub use pallet::*;
 use frame_support::sp_runtime::FixedPointNumber;
 use frame_support::{log, pallet_prelude::*, PalletId};
 use frame_system::pallet_prelude::*;
-use module_support::{DEXIncentives, Erc20InfoMapping, ExchangeRate};
+use module_support::{DEXIncentives, Erc20InfoMapping, ExchangeRate, Ratio};
+use module_traits::arithmetic::One;
+use module_traits::arithmetic::Zero;
 use module_traits::{Happened, MultiCurrency, MultiCurrencyExtended};
 use primitives::{Balance, CurrencyId, TradingPair};
 
@@ -463,5 +465,149 @@ impl<T: Config> Pallet<T> {
 		)
 
 		//Ok(())
+	}
+
+	fn do_add_liquidity(
+		who: T::AccountId,
+		currency_id_a: CurrencyId,
+		currency_id_b: CurrencyId,
+		max_amount_a: Balance,
+		max_amount_b: Balance,
+		min_share_increment: Balance,
+		stake_increment_share: bool,
+	) -> Result<(Balance, Balance, Balance), DispatchError> {
+		let trading_pair = TradingPair::from_currency_ids(currency_id_a, currency_id_b)
+			.ok_or(Error::<T>::InvalidCurrencyId)?;
+
+		ensure!(
+			matches!(Self::trading_pair_statuses(trading_pair), TradingPairStatus::<_, _>::Enabled),
+			Error::<T>::MustBeEnabled
+		);
+
+		ensure!(
+			!max_amount_a.is_zero() && !max_amount_b.is_zero(),
+			Error::<T>::InvalidLiquidityIncrement
+		);
+
+		Self::try_mutate_liquidity_pool(
+			&trading_pair,
+			|(pool_0, pool_1)| -> Result<(Balance, Balance, Balance), DispatchError> {
+				let dex_share_currency_id = trading_pair.dex_share_currency_id();
+				let total_shares = T::Currency::total_issuance(dex_share_currency_id);
+				let (max_amount_0, max_amount_1) = if currency_id_a == trading_pair.first() {
+					(max_amount_a, max_amount_b)
+				} else {
+					(max_amount_b, max_amount_a)
+				};
+
+				let (pool_0_increment, pool_1_increment, share_increment): (
+					Balance,
+					Balance,
+					Balance,
+				) = if total_shares.is_zero() {
+					let (exchange_rate_0, exchange_rate_1) = (
+						ExchangeRate::one(),
+						ExchangeRate::checked_from_rational(max_amount_0, max_amount_1)
+							.ok_or(Error::<T>::StorageOverflow)?,
+					);
+
+					let shares_from_token_0 = exchange_rate_0
+						.checked_mul_int(max_amount_0)
+						.ok_or(Error::<T>::StorageOverflow)?;
+					let shares_from_token_1 = exchange_rate_1
+						.checked_mul_int(max_amount_1)
+						.ok_or(Error::<T>::StorageOverflow)?;
+					let initial_shares = shares_from_token_0
+						.checked_add(shares_from_token_1)
+						.ok_or(Error::<T>::StorageOverflow)?;
+
+					(max_amount_0, max_amount_1, initial_shares)
+				} else {
+					let exchange_rate_0_1 = ExchangeRate::checked_from_rational(*pool_1, *pool_0)
+						.ok_or(Error::<T>::StorageOverflow)?;
+					let input_exchange_rate_0_1 =
+						ExchangeRate::checked_from_rational(max_amount_1, max_amount_0)
+							.ok_or(Error::<T>::StorageOverflow)?;
+
+					if input_exchange_rate_0_1 <= exchange_rate_0_1 {
+						let exchange_rate_1_0 =
+							ExchangeRate::checked_from_rational(*pool_0, *pool_1)
+								.ok_or(Error::<T>::StorageOverflow)?;
+						let amount_0 = exchange_rate_1_0
+							.checked_mul_int(max_amount_1)
+							.ok_or(Error::<T>::StorageOverflow)?;
+						let share_increment = Ratio::checked_from_rational(amount_0, *pool_0)
+							.and_then(|n| n.checked_mul_int(total_shares))
+							.ok_or(Error::<T>::StorageOverflow)?;
+						(amount_0, max_amount_1, share_increment)
+					} else {
+						let amount_1 = exchange_rate_0_1
+							.checked_mul_int(max_amount_0)
+							.ok_or(Error::<T>::StorageOverflow)?;
+						let share_increment = Ratio::checked_from_rational(amount_1, *pool_1)
+							.and_then(|n| n.checked_mul_int(total_shares))
+							.ok_or(Error::<T>::StorageOverflow)?;
+
+						(max_amount_0, amount_1, share_increment)
+					}
+				};
+
+				ensure!(
+					!share_increment.is_zero()
+						&& !pool_0_increment.is_zero()
+						&& !pool_1_increment.is_zero(),
+					Error::<T>::InvalidLiquidityIncrement
+				);
+
+				ensure!(
+					share_increment >= min_share_increment,
+					Error::<T>::UnacceptableShareIncrement
+				);
+
+				let module_account_id = Self::account_id();
+				T::Currency::transfer(
+					trading_pair.first(),
+					&who,
+					&module_account_id,
+					pool_0_increment,
+				);
+				T::Currency::transfer(
+					trading_pair.second(),
+					&who,
+					&module_account_id,
+					pool_1_increment,
+				);
+
+				T::Currency::deposit(dex_share_currency_id, who.clone(), share_increment);
+
+				//*pool_0 =
+				pool_0.checked_add(pool_0_increment).ok_or(Error::<T>::StorageOverflow)?;
+				//*pool_1 =
+				pool_1.checked_add(pool_1_increment).ok_or(Error::<T>::StorageOverflow)?;
+
+				if stake_increment_share {
+					T::DEXIncentives::do_deposit_dex_share(
+						who.clone(),
+						dex_share_currency_id,
+						share_increment,
+					)?;
+				}
+
+				Self::deposit_event(Event::AddLiquidity(
+					who,
+					trading_pair.first(),
+					pool_0_increment,
+					trading_pair.second(),
+					pool_1_increment,
+					share_increment,
+				));
+
+				if currency_id_a == trading_pair.first() {
+					Ok((pool_0_increment, pool_1_increment, share_increment))
+				} else {
+					Ok((pool_1_increment, pool_0_increment, share_increment))
+				}
+			},
+		)
 	}
 }
