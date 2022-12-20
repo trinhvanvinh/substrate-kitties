@@ -53,7 +53,7 @@ pub trait MultiCurrency<AccountId> {
 	// public mutables
 	fn transfer(
 		currency_id: Self::CurrencyId,
-		from: AccountId,
+		from: &AccountId,
 		to: &AccountId,
 		amount: Self::Balance,
 	) -> DispatchResult;

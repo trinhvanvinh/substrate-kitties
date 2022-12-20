@@ -14,7 +14,7 @@ pub use pallet::*;
 // #[cfg(feature = "runtime-benchmarks")]
 // mod benchmarking;
 use frame_support::sp_runtime::FixedPointNumber;
-use frame_support::{pallet_prelude::*, PalletId};
+use frame_support::{log, pallet_prelude::*, PalletId};
 use frame_system::pallet_prelude::*;
 use module_support::{DEXIncentives, Erc20InfoMapping, ExchangeRate};
 use module_traits::{Happened, MultiCurrency, MultiCurrencyExtended};
@@ -350,7 +350,7 @@ impl<T: Config> Pallet<T> {
 
 					T::Currency::transfer(
 						trading_pair.dex_share_currency_id(),
-						Self::account_id(),
+						&Self::account_id(),
 						who,
 						shares_to_claim,
 					);
@@ -369,5 +369,99 @@ impl<T: Config> Pallet<T> {
 		}
 
 		Ok(())
+	}
+
+	fn do_add_provision(
+		who: &T::AccountId,
+		currency_id_a: CurrencyId,
+		currency_id_b: CurrencyId,
+		contribution_a: Balance,
+		contribution_b: Balance,
+	) -> DispatchResult {
+		let trading_pair = TradingPair::from_currency_ids(currency_id_a, currency_id_b)
+			.ok_or(Error::<T>::InvalidCurrencyId)?;
+
+		let mut provision_parameters = match Self::trading_pair_statuses(trading_pair) {
+			TradingPairStatus::<_, _>::Provisioning(provision_parameters) => provision_parameters,
+			_ => return Err(Error::<T>::MustBeProvisioning.into()),
+		};
+
+		let (contribution_0, contribution_1) = if currency_id_a == trading_pair.first() {
+			(contribution_a, contribution_b)
+		} else {
+			(contribution_b, contribution_a)
+		};
+
+		ensure!(
+			contribution_0 >= provision_parameters.min_contribution.0
+				|| contribution_1 >= provision_parameters.min_contribution.1,
+			Error::<T>::InvalidContributionIncrement
+		);
+
+		ProvisioningPool::<T>::try_mutate_exists(
+			trading_pair,
+			&who,
+			|maybe_pool| -> DispatchResult {
+				let existed = maybe_pool.is_some();
+				let mut pool = maybe_pool.unwrap();
+
+				pool.0 = pool.0.checked_add(contribution_a).ok_or(Error::<T>::StorageOverflow)?;
+				pool.1 = pool.1.checked_add(contribution_b).ok_or(Error::<T>::StorageOverflow)?;
+
+				let module_account_id = Self::account_id();
+				T::Currency::transfer(
+					trading_pair.first(),
+					who,
+					&module_account_id,
+					contribution_a,
+				);
+				T::Currency::transfer(
+					trading_pair.second(),
+					who,
+					&module_account_id,
+					contribution_b,
+				);
+
+				*maybe_pool = Some(pool);
+
+				if !existed && maybe_pool.is_some() {
+					if frame_system::Pallet::<T>::inc_consumers(&who).is_err() {
+						log::warn!(
+							"Warning: Attempt to introduce lock consumer reference, 
+						yet no providers.This is unexpected but should be safe."
+						);
+					}
+				}
+
+				provision_parameters.accumulated_provision.0 = provision_parameters
+					.accumulated_provision
+					.0
+					.checked_add(contribution_0)
+					.ok_or(Error::<T>::StorageOverflow)?;
+
+				provision_parameters.accumulated_provision.1 = provision_parameters
+					.accumulated_provision
+					.0
+					.checked_add(contribution_1)
+					.ok_or(Error::<T>::StorageOverflow)?;
+
+				TradingPairStatuses::<T>::insert(
+					trading_pair,
+					TradingPairStatus::<_, _>::Provisioning(provision_parameters),
+				);
+
+				Self::deposit_event(Event::AddProvision(
+					who.clone(),
+					trading_pair.first(),
+					contribution_0,
+					trading_pair.second(),
+					contribution_1,
+				));
+
+				Ok(())
+			},
+		)
+
+		//Ok(())
 	}
 }
