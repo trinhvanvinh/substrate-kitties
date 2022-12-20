@@ -14,6 +14,7 @@ pub use pallet::*;
 // #[cfg(feature = "runtime-benchmarks")]
 // mod benchmarking;
 use frame_support::sp_runtime::FixedPointNumber;
+use frame_support::sp_runtime::SaturatedConversion;
 use frame_support::{log, pallet_prelude::*, PalletId};
 use frame_system::pallet_prelude::*;
 use module_support::{DEXIncentives, Erc20InfoMapping, ExchangeRate, Ratio};
@@ -25,6 +26,7 @@ use primitives::{Balance, CurrencyId, TradingPair};
 use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::sp_runtime::traits::AccountIdConversion;
 use scale_info::TypeInfo;
+use sp_core::U256;
 
 #[derive(Decode, Encode, MaxEncodedLen, TypeInfo, Clone, RuntimeDebug, Copy, PartialEq, Eq)]
 pub struct ProvisioningParameters<Balance, BlockNumber> {
@@ -705,5 +707,115 @@ impl<T: Config> Pallet<T> {
 		} else {
 			(Zero::zero(), Zero::zero())
 		}
+	}
+
+	fn get_target_amount(
+		supply_pool: Balance,
+		target_pool: Balance,
+		supply_amount: Balance,
+	) -> Balance {
+		if supply_amount.is_zero() || supply_pool.is_zero() || target_pool.is_zero() {
+			Zero::zero()
+		} else {
+			let (fee_numerator, fee_denominator) = T::GetExchangeFee::get();
+			let supply_amount_with_fee = U256::from(supply_amount)
+				.saturating_mul(U256::from(fee_denominator.saturating_sub(fee_numerator)));
+
+			let numerator = supply_amount_with_fee.saturating_mul(U256::from(target_pool));
+			let denominator = U256::from(supply_pool)
+				.saturating_mul(U256::from(fee_denominator))
+				.saturating_add(supply_amount_with_fee);
+
+			numerator
+				.checked_div(denominator)
+				.and_then(|n| TryInto::<Balance>::try_into(n).ok())
+				.unwrap_or_else(Zero::zero)
+		}
+	}
+
+	fn get_supply_amount(
+		supply_pool: Balance,
+		target_pool: Balance,
+		target_amount: Balance,
+	) -> Balance {
+		if target_amount.is_zero() || supply_pool.is_zero() || target_pool.is_zero() {
+			Zero::zero()
+		} else {
+			let (fee_numerator, fee_denominator) = T::GetExchangeFee::get();
+			let numerator = U256::from(supply_pool)
+				.saturating_mul(U256::from(target_amount))
+				.saturating_mul(U256::from(fee_denominator));
+
+			let denominator = U256::from(target_pool)
+				.saturating_sub(U256::from(target_amount))
+				.saturating_mul(U256::from(fee_denominator.saturating_sub(fee_numerator)));
+
+			numerator
+				.checked_div(denominator)
+				.and_then(|r| r.checked_add(U256::one()))
+				.and_then(|n| TryInto::<Balance>::try_into(n).ok())
+				.unwrap_or_else(Zero::zero)
+		}
+	}
+
+	fn get_target_amounts(
+		path: &[CurrencyId],
+		supply_amount: Balance,
+	) -> Result<Vec<Balance>, DispatchError> {
+		Self::validate_path(&path);
+
+		let path_length = path.len();
+
+		let mut target_amounts = vec![Zero::zero(); path_length];
+		target_amounts[0] = supply_amount;
+
+		let mut i = 0;
+		while i + 1 < path_length {
+			let trading_pair = TradingPair::from_currency_ids(path[i], path[i + 1])
+				.ok_or(Error::<T>::InvalidCurrencyId)?;
+			ensure!(
+				matches!(
+					Self::trading_pair_statuses(trading_pair),
+					TradingPairStatus::<_, _>::Enabled
+				),
+				Error::<T>::MustBeEnabled
+			);
+			let (supply_pool, target_pool) = Self::get_liquidity(path[i], path[i + 1]);
+			ensure!(
+				!supply_pool.is_zero() && !target_pool.is_zero(),
+				Error::<T>::InsufficientLiquidity
+			);
+
+			let target_amount =
+				Self::get_target_amount(supply_pool, target_pool, target_amounts[i]);
+			ensure!(!target_amount.is_zero(), Error::<T>::ZeroTargetAmount);
+
+			target_amounts[i + 1] = target_amount;
+
+			i += 1;
+		}
+		Ok(target_amounts)
+	}
+
+	//fn get_supply_amounts() -> Result<Vec<Balance>, DispatchError> {}
+
+	fn validate_path(path: &[CurrencyId]) -> DispatchResult {
+		let path_length = path.len();
+		ensure!(
+			path_length >= 2 && path_length <= T::TradingPathLimit::get().saturated_into(),
+			Error::<T>::InvalidTradingPathLength
+		);
+
+		ensure!(path.get(0) != path.get(path_length - 1), Error::<T>::InvalidTradingPath);
+
+		Ok(())
+	}
+
+	fn _swap() -> DispatchResult {
+		Ok(())
+	}
+
+	fn _swap_by_path() -> DispatchResult {
+		Ok(())
 	}
 }

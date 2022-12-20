@@ -24,6 +24,7 @@ primitives = {package = "acala-primitives", path="../../../primitives", default-
 module-traits = {path="../modules/traits", default-features=false}
 module-support = {package="module-support", path="../modules/support", default-features=false}
 sp-std = { version = "4.0.0-dev", default-features = false, git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.30" }
+sp-core = { version = "6.0.0", default-features = false, git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.30" }
 
 
 [dev-dependencies]
