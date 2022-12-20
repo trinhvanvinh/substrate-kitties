@@ -222,7 +222,7 @@ pub mod pallet {
 		NoneValue,
 		/// Errors should have helpful documentation associated with them.
 		StorageOverflow,
-
+		StorageUnderflow,
 		AlreadyEnabled,
 		MustBeProvisioning,
 		MustBeDisabled,
@@ -609,5 +609,101 @@ impl<T: Config> Pallet<T> {
 				}
 			},
 		)
+	}
+
+	fn do_remove_liquidity(
+		who: T::AccountId,
+		currency_id_a: CurrencyId,
+		currency_id_b: CurrencyId,
+		remove_share: Balance,
+		min_withdrawn_a: Balance,
+		min_withdrawn_b: Balance,
+		by_unstake: bool,
+	) -> Result<(Balance, Balance), DispatchError> {
+		if remove_share.is_zero() {
+			return Ok((Zero::zero(), Zero::zero()));
+		}
+
+		let trading_pair = TradingPair::from_currency_ids(currency_id_a, currency_id_b)
+			.ok_or(Error::<T>::InvalidCurrencyId)?;
+		let dex_share_currency_id = trading_pair.dex_share_currency_id();
+
+		Self::try_mutate_liquidity_pool(
+			&trading_pair,
+			|(pool_0, pool_1)| -> Result<(Balance, Balance), DispatchError> {
+				let (min_withdraw_0, min_withdraw_1) = if currency_id_a == trading_pair.first() {
+					(min_withdrawn_a, min_withdrawn_b)
+				} else {
+					(min_withdrawn_b, min_withdrawn_a)
+				};
+
+				let total_shares = T::Currency::total_issuance(dex_share_currency_id);
+				let mut proportion = Ratio::checked_from_rational(remove_share, total_shares)
+					.ok_or(Error::<T>::StorageOverflow)?;
+				let pool_0_decrement =
+					proportion.checked_mul_int(*pool_0).ok_or(Error::<T>::StorageOverflow)?;
+				let pool_1_decrement =
+					proportion.checked_mul_int(*pool_1).ok_or(Error::<T>::StorageOverflow)?;
+				let module_account_id = Self::account_id();
+
+				ensure!(
+					pool_0_decrement >= min_withdraw_0 && pool_1_decrement >= min_withdraw_1,
+					Error::<T>::UnacceptableLiquidityWithdrawn
+				);
+
+				if by_unstake {
+					T::DEXIncentives::do_withdraw_dex_share(
+						who.clone(),
+						dex_share_currency_id,
+						remove_share,
+					);
+				}
+
+				T::Currency::withdraw(dex_share_currency_id, who.clone(), remove_share);
+				T::Currency::transfer(
+					trading_pair.first(),
+					&module_account_id,
+					&who,
+					pool_0_decrement,
+				);
+				T::Currency::transfer(
+					trading_pair.second(),
+					&module_account_id,
+					&who,
+					pool_1_decrement,
+				);
+
+				pool_0.checked_sub(pool_0_decrement).ok_or(Error::<T>::StorageUnderflow);
+				pool_1.checked_sub(pool_1_decrement).ok_or(Error::<T>::StorageUnderflow);
+
+				Self::deposit_event(Event::RemoveLiquidity(
+					who,
+					trading_pair.first(),
+					pool_0_decrement,
+					trading_pair.second(),
+					pool_1_decrement,
+					remove_share,
+				));
+
+				if currency_id_a == trading_pair.first() {
+					Ok((pool_0_decrement, pool_1_decrement))
+				} else {
+					Ok((pool_1_decrement, pool_0_decrement))
+				}
+			},
+		)
+	}
+
+	fn get_liquidity(currency_id_a: CurrencyId, currency_id_b: CurrencyId) -> (Balance, Balance) {
+		if let Some(trading_pair) = TradingPair::from_currency_ids(currency_id_a, currency_id_b) {
+			let (pool_0, pool_1) = Self::liquidity_pool(trading_pair);
+			if currency_id_a == trading_pair.first() {
+				(pool_0, pool_1)
+			} else {
+				(pool_1, pool_0)
+			}
+		} else {
+			(Zero::zero(), Zero::zero())
+		}
 	}
 }
