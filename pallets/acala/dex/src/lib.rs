@@ -80,6 +80,8 @@ pub mod pallet {
 
 		type DEXIncentives: DEXIncentives<Self::AccountId, CurrencyId, Balance>;
 
+		type ListingOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+
 		#[pallet::constant]
 		type ExtendedProvisioningBlocks: Get<Self::BlockNumber>;
 
@@ -291,6 +293,167 @@ pub mod pallet {
 				},
 			}
 		}
+
+		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1).ref_time())]
+		pub fn swap_with_exact_supply(
+			origin: OriginFor<T>,
+			path: Vec<CurrencyId>,
+			supply_amount: Balance,
+			min_target_amount: Balance,
+		) -> DispatchResult {
+			let who = ensure_signed(origin)?;
+			Self::do_swap_with_exact_supply(&who, &path, supply_amount, min_target_amount);
+			Ok(())
+		}
+
+		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1).ref_time())]
+		pub fn swap_with_exact_target(
+			origin: OriginFor<T>,
+			path: Vec<CurrencyId>,
+			target_amount: Balance,
+			max_supply_amount: Balance,
+		) -> DispatchResult {
+			let who = ensure_signed(origin)?;
+			Self::do_swap_with_exact_target(&who, &path, target_amount, max_supply_amount);
+			Ok(())
+		}
+
+		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1).ref_time())]
+		pub fn add_liquidity(
+			origin: OriginFor<T>,
+			currency_id_a: CurrencyId,
+			currency_id_b: CurrencyId,
+			max_amount_a: Balance,
+			max_amount_b: Balance,
+			min_share_increment: Balance,
+			stake_increment_share: bool,
+		) -> DispatchResult {
+			let who = ensure_signed(origin)?;
+			Self::do_add_liquidity(
+				who,
+				currency_id_a,
+				currency_id_b,
+				max_amount_a,
+				max_amount_b,
+				min_share_increment,
+				stake_increment_share,
+			);
+			Ok(())
+		}
+
+		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1).ref_time())]
+		pub fn add_provision(
+			origin: OriginFor<T>,
+			currency_id_a: CurrencyId,
+			currency_id_b: CurrencyId,
+			amount_a: Balance,
+			amount_b: Balance,
+		) -> DispatchResult {
+			let who = ensure_signed(origin)?;
+			Self::do_add_provision(&who, currency_id_a, currency_id_b, amount_a, amount_b);
+			Ok(())
+		}
+
+		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1).ref_time())]
+		pub fn claim_dex_share(
+			origin: OriginFor<T>,
+			owner: T::AccountId,
+			currency_id_a: CurrencyId,
+			currency_id_b: CurrencyId,
+		) -> DispatchResult {
+			let _ = ensure_signed(origin)?;
+			Self::do_claim_dex_share(&owner, currency_id_a, currency_id_b);
+			Ok(())
+		}
+
+		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1).ref_time())]
+		pub fn remove_liquidity(
+			origin: OriginFor<T>,
+			currency_id_a: CurrencyId,
+			currency_id_b: CurrencyId,
+			remove_share: Balance,
+			min_withdraw_a: Balance,
+			min_withdraw_b: Balance,
+			by_unstake: bool,
+		) -> DispatchResult {
+			let who = ensure_signed(origin)?;
+			Self::do_remove_liquidity(
+				who,
+				currency_id_a,
+				currency_id_b,
+				remove_share,
+				min_withdraw_a,
+				min_withdraw_b,
+				by_unstake,
+			);
+			Ok(())
+		}
+
+		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1).ref_time())]
+		pub fn list_provisioning(
+			origin: OriginFor<T>,
+			currency_id_a: CurrencyId,
+			currency_id_b: CurrencyId,
+			min_contribution_a: Balance,
+			min_contribution_b: Balance,
+			target_provision_a: Balance,
+			target_provision_b: Balance,
+			not_before: T::BlockNumber,
+		) -> DispatchResult {
+			T::ListingOrigin::ensure_origin(origin);
+
+			let trading_pair = TradingPair::from_currency_ids(currency_id_a, currency_id_b)
+				.ok_or(Error::<T>::InvalidCurrencyId)?;
+			ensure!(
+				matches!(
+					Self::trading_pair_statuses(trading_pair),
+					TradingPairStatus::<_, _>::Disabled
+				),
+				Error::<T>::MustBeDisabled
+			);
+
+			ensure!(
+				T::Currency::total_issuance(trading_pair.dex_share_currency_id()).is_zero()
+					&& ProvisioningPool::<T>::iter_prefix(trading_pair).next().is_none(),
+				Error::<T>::NotAllowedList
+			);
+
+			let check_asset_registry = |currency_id: CurrencyId| match currency_id {
+				CurrencyId::Erc20(_) | CurrencyId::ForeignAsset(_) => {
+					T::Erc20InfoMapping::name(currency_id)
+						.map(|_| ())
+						.ok_or(Error::<T>::AssetUnregistered)
+				},
+				CurrencyId::Token(_)
+				| CurrencyId::DexShare(_, _)
+				| CurrencyId::LiquidCrowdloan(_) => Ok(()),
+			};
+
+			check_asset_registry(currency_id_a);
+			check_asset_registry(currency_id_b);
+
+			let (min_contribution, target_provision) = if currency_id_a == trading_pair.first() {
+				((min_contribution_a, min_contribution_b), (target_provision_a, target_provision_b))
+			} else {
+				((min_contribution_b, min_contribution_a), (target_provision_b, target_provision_a))
+			};
+
+			TradingPairStatuses::<T>::insert(
+				trading_pair,
+				TradingPairStatus::Provisioning(ProvisioningParameters {
+					min_contribution,
+					target_provision,
+					accumulated_provision: Default::default(),
+					not_before,
+				}),
+			);
+
+			Self::deposit_event(Event::ListProvisioning(trading_pair));
+
+			Ok(())
+		}
+
+		
 	}
 }
 

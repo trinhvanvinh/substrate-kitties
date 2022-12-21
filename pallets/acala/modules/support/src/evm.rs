@@ -1,7 +1,7 @@
 use primitives::CurrencyId;
 
 pub trait Erc20InfoMapping {
-	//fn name(currency_id: CurrencyId) -> Option<Vec<u8>>;
+	fn name(currency_id: CurrencyId) -> Option<Vec<u8>>;
 
 	// fn symbol(currency_id: CurrencyId) -> Option<Vec<u8>>;
 
@@ -9,5 +9,7 @@ pub trait Erc20InfoMapping {
 }
 
 impl Erc20InfoMapping for () {
-	//fn
+	fn name(_currency_id: CurrencyId) -> Option<Vec<u8>> {
+		None
+	}
 }
