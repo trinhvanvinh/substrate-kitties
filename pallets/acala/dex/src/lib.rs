@@ -797,7 +797,41 @@ impl<T: Config> Pallet<T> {
 		Ok(target_amounts)
 	}
 
-	//fn get_supply_amounts() -> Result<Vec<Balance>, DispatchError> {}
+	fn get_supply_amounts(
+		path: &[CurrencyId],
+		target_amount: Balance,
+	) -> Result<Vec<Balance>, DispatchError> {
+		Self::validate_path(path);
+
+		let path_length = path.len();
+		let mut supply_amounts: Vec<Balance> = vec![Zero::zero(); path_length];
+		supply_amounts[path_length - 1] = target_amount;
+
+		let mut i = path_length - 1;
+		while i > 0 {
+			let trading_pair = TradingPair::from_currency_ids(path[i - 1], path[i])
+				.ok_or(Error::<T>::InvalidCurrencyId)?;
+			ensure!(
+				matches!(
+					Self::trading_pair_statuses(trading_pair),
+					TradingPairStatus::<_, _>::Enabled
+				),
+				Error::<T>::MustBeEnabled
+			);
+			let (supply_pool, target_pool) = Self::get_liquidity(path[i - 1], path[i]);
+			ensure!(
+				!supply_pool.is_zero() && !target_pool.is_zero(),
+				Error::<T>::InsufficientLiquidity
+			);
+			let supply_amount =
+				Self::get_supply_amount(supply_pool, target_pool, supply_amounts[i]);
+			ensure!(!supply_amount.is_zero(), Error::<T>::ZeroSupplyAmount);
+
+			supply_amounts[i - 1] = supply_amount;
+			i -= 1;
+		}
+		Ok(supply_amounts)
+	}
 
 	fn validate_path(path: &[CurrencyId]) -> DispatchResult {
 		let path_length = path.len();
@@ -811,11 +845,91 @@ impl<T: Config> Pallet<T> {
 		Ok(())
 	}
 
-	fn _swap() -> DispatchResult {
+	fn _swap(
+		supply_currency_id: CurrencyId,
+		target_currency_id: CurrencyId,
+		supply_increment: Balance,
+		target_decrement: Balance,
+	) -> DispatchResult {
+		if let Some(trading_pair) =
+			TradingPair::from_currency_ids(supply_currency_id, target_currency_id)
+		{
+			Self::try_mutate_liquidity_pool(&trading_pair, |(pool_0, pool_1)| -> DispatchResult {
+				let invariant_before_swap: U256 =
+					U256::from(*pool_0).saturating_mul(U256::from(*pool_1));
+
+				if supply_currency_id == trading_pair.first() {
+					pool_0.checked_add(supply_increment).ok_or(Error::<T>::StorageOverflow);
+					pool_1.checked_sub(target_decrement).ok_or(Error::<T>::StorageUnderflow);
+				} else {
+					pool_0.checked_sub(target_decrement).ok_or(Error::<T>::StorageUnderflow);
+					pool_1.checked_add(supply_increment).ok_or(Error::<T>::StorageOverflow);
+				}
+
+				let invariant_after_swap = U256::from(*pool_0).saturating_mul(U256::from(*pool_1));
+				ensure!(
+					invariant_after_swap >= invariant_before_swap,
+					Error::<T>::InvariantCheckFailed
+				);
+
+				Ok(())
+			});
+		}
 		Ok(())
 	}
 
-	fn _swap_by_path() -> DispatchResult {
+	fn _swap_by_path(path: &[CurrencyId], amounts: &[Balance]) -> DispatchResult {
+		let mut i = 0;
+		while i + 1 < path.len() {
+			let (supply_currency_id, target_currency_id) = (path[i], path[i + 1]);
+			let (supply_increment, target_decrement) = (amounts[i], amounts[i + 1]);
+			Self::_swap(supply_currency_id, target_currency_id, supply_increment, target_decrement);
+			i += 1;
+		}
 		Ok(())
+	}
+
+	fn do_swap_with_exact_supply(
+		who: &T::AccountId,
+		path: &[CurrencyId],
+		supply_amount: Balance,
+		min_target_amount: Balance,
+	) -> Result<Balance, DispatchError> {
+		let amounts = Self::get_target_amounts(&path, supply_amount)?;
+		ensure!(
+			amounts[amounts.len() - 1] >= min_target_amount,
+			Error::<T>::InsufficientTargetAmount
+		);
+
+		let module_account_id = Self::account_id();
+		let actual_target_amount = amounts[amounts.len() - 1];
+
+		T::Currency::transfer(path[0], &who, &module_account_id, supply_amount);
+		Self::_swap_by_path(&path, &amounts);
+		T::Currency::transfer(path[path.len() - 1], &module_account_id, &who, actual_target_amount);
+
+		Self::deposit_event(Event::Swap(who.clone(), path.to_vec(), amounts));
+
+		Ok(actual_target_amount)
+	}
+
+	fn do_swap_with_exact_target(
+		who: &T::AccountId,
+		path: &[CurrencyId],
+		target_amount: Balance,
+		max_supply_amount: Balance,
+	) -> Result<Balance, DispatchError> {
+		let amounts = Self::get_supply_amounts(path, target_amount)?;
+		ensure!(amounts[0] <= max_supply_amount, Error::<T>::ExcessiveSupplyAmount);
+		let module_account_id = Self::account_id();
+		let actual_supply_amount = amounts[0];
+
+		T::Currency::transfer(path[0], &who, &module_account_id, actual_supply_amount);
+		Self::_swap_by_path(&path, &amounts);
+		T::Currency::transfer(path[path.len() - 1], &module_account_id, &who, target_amount);
+
+		Self::deposit_event(Event::Swap(who.clone(), path.to_vec(), amounts));
+
+		Ok(actual_supply_amount)
 	}
 }
