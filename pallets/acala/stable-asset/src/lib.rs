@@ -14,6 +14,106 @@ pub use pallet::*;
 // #[cfg(feature = "runtime-benchmarks")]
 // mod benchmarking;
 
+use frame_support::codec::{Decode, Encode};
+use frame_support::dispatch::{DispatchError, DispatchResult};
+use frame_support::ensure;
+use frame_support::traits::fungibles::{Inspect, Mutate, Transfer};
+use frame_support::traits::Get;
+use scale_info::TypeInfo;
+use sp_core::U512;
+use sp_runtime::{
+	traits::{AccountIdConversion, CheckedAdd, CheckedDiv, CheckedMul, CheckedSub, One, Zero},
+	SaturatedConversion,
+};
+use sp_std::result::Result;
+
+pub type PoolTokenIndex = u32;
+pub type StableAssetPoolId = u32;
+const NUMBER_OF_ITERATIONS_TO_CONVERGE: i32 = 255;
+
+pub struct StableAssetPoolInfo<AssetId, AtLeast64BitUnsigned, Balance, AccountId, BlockNumber> {
+	pub pool_asset: AssetId,
+	pub assets: Vec<AssetId>,
+	pub precisions: Vec<AtLeast64BitUnsigned>,
+	pub mint_fee: AtLeast64BitUnsigned,
+	pub swap_fee: AtLeast64BitUnsigned,
+	pub redeem_fee: AtLeast64BitUnsigned,
+	pub total_supply: Balance,
+	pub a: AtLeast64BitUnsigned,
+	pub a_block: BlockNumber,
+	pub future_a: AtLeast64BitUnsigned,
+	pub future_a_block: BlockNumber,
+	pub balances: Vec<Balance>,
+	pub fee_recipient: AccountId,
+	pub account_id: AccountId,
+	pub yield_recipient: AccountId,
+	pub precision: AtLeast64BitUnsigned,
+}
+
+pub mod traits {
+	use crate::{PoolTokenIndex, RedeemProportionResult};
+	use frame_support::dispatch::{DispatchError, DispatchResult};
+	use sp_std::prelude::*;
+
+	pub trait ValidateAssetId<AssetId> {
+		fn validate(a: AssetId) -> bool;
+	}
+
+	pub trait StableAsset {
+		type AssetId;
+		type AtLeast64BitUnsigned;
+		type Balance;
+		type AccountId;
+		type BlockNumber;
+
+		fn pool_count() -> StableAssetPoolId;
+
+		fn pool(
+			id: StableAssetPoolId,
+		) -> Option<
+			StableAssetPoolInfo<
+				Self::AssetId,
+				Self::AtLeast64BitUnsigned,
+				Self::Balance,
+				Self::AccountId,
+				Self::BlockNumber,
+			>,
+		>;
+
+		fn create_pool(
+			pool_asset: Self::AssetId,
+			assets: Vec<Self::AssetId>,
+			precisions: Vec<Self::AtLeast64BitUnsigned>,
+			mint_fee: Self::AtLeast64BitUnsigned,
+			swap_fee: Self::AtLeast64BitUnsigned,
+			redeem_fee: Self::AtLeast64BitUnsigned,
+			initial_a: Self::AtLeast64BitUnsigned,
+			fee_recipient: Self::AccountId,
+			yield_recipient: Self::AccountId,
+			precision: Self::AtLeast64BitUnsigned,
+		) -> DispatchResult;
+
+		fn mint(
+			who: Self::AccountId,
+			pool_id: StableAssetPoolId,
+			amounts: Vec<Self::Balance>,
+			min_mint_amount: Self::Balance,
+		) -> DispatchResult;
+
+		fn swap(
+			who: Self::AccountId,
+			pool_id: StableAssetPoolId,
+			i: PoolTokenIndex,
+			j: PoolTokenIndex,
+			dx: Self::Balance,
+			min_dy: Self::Balance,
+			asset_length: u32,
+		) -> Result<(Self::Balance, Self::Balance), DispatchError>;
+
+		
+	}
+}
+
 #[frame_support::pallet]
 pub mod pallet {
 	use frame_support::pallet_prelude::*;
