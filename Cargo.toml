@@ -7,6 +7,7 @@ members = [
     #"pallets/tictactoe",
     #"pallets/dex",
     "pallets/acala/dex",
+    "pallets/acala/stable-asset",
     "pallets/acala/modules/*",
     "primitives",
     "runtime",
