@@ -37,6 +37,20 @@ pub mod pallet {
 	pub trait Config: frame_system::Config {
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+
+		type Dex: DEXManager<Self::AccountId, Balance, CurrencyId>;
+		type StableAsset: StableAssetT<
+			AssetId = CurrencyId,
+			AtLeast64BitUnsigned = Balance,
+			Balance = Balance,
+			AccountId = Self::AccountId,
+			BlockNumber = Self::BlockNumber,
+		>;
+		type GovernanceOrigin: EnsureOrigin<<Self as frame_system::Config>::RuntimeOrigin>;
+		#[pallet::constant]
+		type DexSwapJointList: Get<Vec<Vec<CurrencyId>>>;
+		#[pallet::constant]
+		type SwapPathLimit: Get<u32>;
 	}
 
 	// The pallet's runtime storage items.
@@ -46,6 +60,16 @@ pub mod pallet {
 	// Learn more about declaring storage items:
 	// https://docs.substrate.io/main-docs/build/runtime-storage/#declaring-storage-items
 	pub type Something<T> = StorageValue<_, u32>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn aggregated_swap_paths)]
+	pub type AggregatedSwapPaths<T: Config> = StorageMap<
+		_,
+		Twox64Concat,
+		(CurrencyId, CurrencyId),
+		BoundedVec<SwapPath, T::SwapPathLimit>,
+		OptionQuery,
+	>;
 
 	// Pallets use events to inform users when important changes are made.
 	// https://docs.substrate.io/main-docs/build/events-errors/
@@ -64,6 +88,11 @@ pub mod pallet {
 		NoneValue,
 		/// Errors should have helpful documentation associated with them.
 		StorageOverflow,
+
+		CannotSwap,
+		InvalidPoolId,
+		InvalidTokenIndex,
+		InvalidSwapPath,
 	}
 
 	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
@@ -105,6 +134,22 @@ pub mod pallet {
 					<Something<T>>::put(new);
 					Ok(())
 				},
+			}
+		}
+	}
+}
+
+impl<T: Config> Pallet<T> {
+	fn check_swap_paths(paths: [SwapPath]) -> Result<(CurrencyId, CurrencyId), DispatchError> {
+		ensure!(!paths.is_empty(), Error::<T>::InvalidSwapPath);
+		let supply_current_id = None;
+		let previous_output_currency_id = None;
+
+		for path in paths {
+			match path {
+				SwapPath::Dex(dex_path) => {},
+
+				SwapPath::Taiga(pool_id, supply_asset_index, target_asset_index) => {},
 			}
 		}
 	}
