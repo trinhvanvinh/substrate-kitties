@@ -12,3 +12,6 @@ pub use evm::Erc20InfoMapping;
 
 pub mod incentives;
 pub use incentives::DEXIncentives;
+
+pub mod dex;
+pub use crate::dex::*;

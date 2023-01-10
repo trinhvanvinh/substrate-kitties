@@ -3588,9 +3588,12 @@ dependencies = [
  "frame-system",
  "parity-scale-codec",
  "scale-info",
+ "serde",
  "sp-core",
  "sp-io",
  "sp-runtime",
+ "sp-std",
+ "stable-asset",
 ]
 
 [[package]]
@@ -4030,14 +4033,18 @@ dependencies = [
 name = "pallet-aggregated-dex"
 version = "4.0.0-dev"
 dependencies = [
+ "acala-primitives",
  "frame-benchmarking",
  "frame-support",
  "frame-system",
+ "module-support",
  "parity-scale-codec",
  "scale-info",
  "sp-core",
  "sp-io",
  "sp-runtime",
+ "sp-std",
+ "stable-asset",
 ]
 
 [[package]]

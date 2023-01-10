@@ -14,10 +14,19 @@ pub use pallet::*;
 // #[cfg(feature = "runtime-benchmarks")]
 // mod benchmarking;
 
+use frame_support::{pallet_prelude::*, transactional};
+use frame_system::pallet_prelude::*;
+use primitives::{Balance, CurrencyId};
+use sp_runtime::traits::{Convert, Zero};
+use sp_std::{marker::PhantomData, vec::Vec};
+use stable_asset::traits::StableAsset as StableAssetT;
+use support::{AggregatedSwapPath, DEXManager, Swap, SwapLimit};
+
+pub type SwapPath = AggregatedSwapPath<CurrencyId>;
+
 #[frame_support::pallet]
 pub mod pallet {
-	use frame_support::pallet_prelude::*;
-	use frame_system::pallet_prelude::*;
+	use super::*;
 
 	#[pallet::pallet]
 	#[pallet::generate_store(pub(super) trait Store)]
