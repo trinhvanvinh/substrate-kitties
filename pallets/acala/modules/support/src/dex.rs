@@ -1,4 +1,4 @@
-use codec::{Decode, Encode};
+use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::traits::Get;
 use scale_info::TypeInfo;
 #[cfg(feature = "std")]
@@ -13,7 +13,10 @@ pub enum SwapLimit<Balance> {
 	ExactSupply(Balance, Balance),
 	ExactTarget(Balance, Balance),
 }
-
+#[derive(
+	Clone, Decode, Encode, TypeInfo, Eq, PartialEq, PartialOrd, Ord, RuntimeDebug, MaxEncodedLen,
+)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 pub enum AggregatedSwapPath<CurrencyId> {
 	Dex(Vec<CurrencyId>),
 	Taiga(StableAssetPoolId, PoolTokenIndex, PoolTokenIndex),
