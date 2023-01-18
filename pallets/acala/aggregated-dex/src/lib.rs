@@ -137,6 +137,42 @@ pub mod pallet {
 				},
 			}
 		}
+
+		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1).ref_time())]
+		pub fn swap_with_exact_supply(origin: OriginFor<T>, paths: Vec<SwapPath>, supply_amount: Balance, min_target_amount: Balance)-> DispatchResult{
+			let who = ensure_signed(origin)?;
+			let paths: BoundedVec<SwapPath, T::SwapPathLimit> = paths.try_into().map_err(|_| Error::<T>::InvalidSwapPath)?;
+			let _ = Self::do_aggregated_swap(who, &paths, SwapLimit::ExactSupply(supply_amount, min_target_amount));
+			Ok(())
+		}
+
+		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1).ref_time())]
+		pub fn swap_with_exact_target(origin: OriginFor<T>, paths: Vec<SwapPath>, target_amount: Balance, max_supply_amount: Balance)-> DispatchResult{
+			let who = ensure_signed(origin)?;
+			let paths: BoundedVec<SwapPath, T::SwapPathLimit> = paths.try_into().map_err(|_| Error::<T>::InvalidSwapPath)?;
+			let _ = Self::do_aggregated_swap(who, &paths, SwapLimit::ExactTarget(max_supply_amount, target_amount))?;
+
+			Ok(())
+		}
+
+		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1).ref_time())]
+		pub fn update_aggregated_swap_paths(origin: OriginFor<T>, updates: Vec<((CurrencyId, CurrencyId), Option<Vec<SwapPath>>)>)-> DispatchResult{
+			T::GovernanceOrigin::ensure_origin(origin)?;
+
+			for (key, maybe_paths) in updates{
+				if let Some(paths) = maybe_paths{
+					let paths: BoundedVec<SwapPath, T::SwapPathLimit> = paths.try_into().map_err(|_| Error::<T>::InvalidSwapPath)?;
+					let (supply_currency_id, target_currency_id) = Self::check_swap_paths(&paths)?;
+					ensure!(key == (supply_currency_id, target_currency_id), Error::<T>::InvalidSwapPath);
+					AggregatedSwapPaths::<T>::insert(key, paths);
+				}else{
+					AggregatedSwapPaths::<T>::remove(key);
+				}	
+			}
+
+			Ok(())
+		}
+
 	}
 }
 
